@@ -187,11 +187,28 @@ class ParticleFilter(Node):
         # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object
         # just to get started we will fix the robot's pose to always be at the origin
         self.robot_pose = Pose()
+        
+
+        xs = np.array([p.x for p in self.particle_cloud])
+        ys = np.array([p.y for p in self.particle_cloud])
+        thetas = np.array([p.theta for p in self.particle_cloud])
+        weights = np.array([p.w for p in self.particle_cloud])
+
+        # sum up
+        mean_x = np.average(xs,weights=weights)
+        mean_y = np.average(ys, weights=weights)
+        mean_theta = math.atan2(np.average(np.sin(thetas), weights=weights), np.average(np.cos(thetas), weights=weights))
+
+        # set pose
+        self.robot_pose = Particle(mean_x, mean_y, mean_theta).as_pose()
+
+
         if hasattr(self, 'odom_pose'):
             self.transform_helper.fix_map_to_odom_transform(self.robot_pose,
                                                             self.odom_pose)
         else:
             self.get_logger().warn("Can't set map->odom transform since no odom data received")
+
 
     def update_particles_with_odom(self):
         """ Update the particles using the newly given odometry pose.
@@ -224,6 +241,28 @@ class ParticleFilter(Node):
         self.normalize_particles()
         # TODO: fill out the rest of the implementation
 
+        # collect weights
+        weights = [p.w for p in self.particle_cloud]
+
+        # select particles based on weights
+        chosen = self.transform_helper.draw_random_sample(self.particle_cloud, weights, self.n_particles)
+
+        # build new particle cloud
+        new_cloud = []
+
+        sigma_xy_resample = 0.05 # m
+        sigma_theta_resample = 0.05 # rad
+        for p in chosen:
+            x = p.x + np.random.normal(0,sigma_xy_resample)
+            y = p.y + np.random.normal(0,sigma_xy_resample)
+            theta = p.theta + np.random.normal(0,sigma_theta_resample)
+
+            new_particle = Particle(x,y,theta, w = 1.0)
+            new_cloud.append(new_particle)
+
+        self.particle_cloud = new_cloud
+        self.normalize_particles
+
     def update_particles_with_laser(self, r, theta):
         """ Updates the particle weights in response to the scan data
             r: the distance readings to obstacles
@@ -247,6 +286,24 @@ class ParticleFilter(Node):
             xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
         self.particle_cloud = []
         # TODO create particles
+        
+        # if no xy_theta, use odometry
+        if xy_theta is None:
+            xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
+
+        # determine particle cloud center
+        (x0, y0, theta0) = xy_theta
+
+        # create n_particles particles scattered around cloud center
+        for i in range(self.n_particles):
+            particle_x = x0 + np.random.normal(0, 1) # std dev of 1m
+            particle_y = y0 + np.random.normal(0, 1)
+            particle_theta = theta0 + np.random.normal(0,2) # std dev of 2 rad
+            particle_theta = self.transform_helper.wrap_to_pi()
+
+            particle = Particle(particle_x, particle_y, particle_theta, w = 1.0)
+            self.particle_cloud.append(particle)
+
 
         self.normalize_particles()
         self.update_robot_pose()
