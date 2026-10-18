@@ -228,6 +228,30 @@ class ParticleFilter(Node):
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
+        
+        t1_o = [[math.cos(self.current_odom_xy_theta[2]), -math.sin(self.current_odom_xy_theta[2]), self.current_odom_xy_theta[0]],
+                  [math.sin(self.current_odom_xy_theta[2]), math.cos(self.current_odom_xy_theta[2]), self.current_odom_xy_theta[1]],
+                  [0, 0, 1]]
+        x_t1 = [[self.current_odom_xy_theta[0]],
+                   [self.current_odom_xy_theta[1]],
+                   [1]]
+        t2_o = [[math.cos(new_odom_xy_theta[2]), -math.sin(new_odom_xy_theta[2]), new_odom_xy_theta[0]],
+                  [math.sin(new_odom_xy_theta[2]), math.cos(new_odom_xy_theta[2]), new_odom_xy_theta[1]],
+                  [0, 0, 1]]
+        t2_t1 = np.linalg.inv(t1_o) @ t2_o
+
+        t1_o_p = [[math.cos(p.theta), -math.sin(p.theta), p.x],
+                  [math.sin(p.theta), math.cos(p.theta), p.y],
+                  [0, 0, 1]]
+        x_t1_p = [[p.x],
+                   [p.y],
+                   [1]]
+        t2_o_p = [[math.cos(new_odom_xy_theta[2]), -math.sin(new_odom_xy_theta[2]), new_odom_xy_theta[0]],
+                  [math.sin(new_odom_xy_theta[2]), math.cos(new_odom_xy_theta[2]), new_odom_xy_theta[1]],
+                  [0, 0, 1]]
+        t2_t1_p = np.linalg.inv(t1_o) @ t2_o
+
+        for p in self.particle_cloud:
 
         # TODO: modify particles using delta
 
