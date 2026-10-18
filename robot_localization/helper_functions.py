@@ -177,7 +177,3 @@ class TFHelper(object):
                                         w=laser_pose.orientation.w)
         laser_yaw = rot.GetRPY()[2]
         return (msg.ranges, np.linspace(msg.angle_min+laser_yaw, msg.angle_max+laser_yaw, len(msg.ranges)))
-    
-    def wrap_to_pi(angle):
-        """ Wrap an angle in radians to the range [-pi, pi) """
-        return (angle + math.pi) % (2 * math.pi) - math.pi

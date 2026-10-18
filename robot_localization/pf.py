@@ -16,7 +16,7 @@ import math
 import time
 import numpy as np
 from occupancy_field import OccupancyField
-from helper_functions import TFHelper
+from helper_functions import TFHelper, draw_random_sample
 from rclpy.qos import qos_profile_sensor_data
 from angle_helpers import quaternion_from_euler
 
@@ -227,7 +227,7 @@ class ParticleFilter(Node):
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
-        
+        """
         t1_o = [[math.cos(self.current_odom_xy_theta[2]), -math.sin(self.current_odom_xy_theta[2]), self.current_odom_xy_theta[0]],
                   [math.sin(self.current_odom_xy_theta[2]), math.cos(self.current_odom_xy_theta[2]), self.current_odom_xy_theta[1]],
                   [0, 0, 1]]
@@ -249,10 +249,26 @@ class ParticleFilter(Node):
                   [math.sin(new_odom_xy_theta[2]), math.cos(new_odom_xy_theta[2]), new_odom_xy_theta[1]],
                   [0, 0, 1]]
         t2_t1_p = np.linalg.inv(t1_o) @ t2_o
+        """
+
+        # theta is in odom frame, need to convert to robot frame
+        [old_x, old_y, old_theta] = old_odom_xy_theta
+        dx = delta[0]
+        dy = delta[1]
+        dtheta = self.transform_helper.angle_diff(self.current_odom_xy_theta[2], old_theta)
+        
+        forward = math.cos(old_theta) * dx + math.sin(old_theta) * dy  # forward displacement in robot frame
+        sideways = -math.sin(old_theta) * dx + math.cos(old_theta) * dy # sideways displacement in robot frame
 
         for p in self.particle_cloud:
+            # move particle in world/map frame given robot frame translation
+            p.x     += forward * math.cos(p.theta) - sideways * math.sin(p.theta)
+            p.y     += forward * math.sin(p.theta) + sideways * math.cos(p.theta)
+            p.theta += dtheta
+            p.theta = self.transform_helper.angle_normalize(p.theta)
 
-        # TODO: modify particles using delta
+        
+        
 
     def resample_particles(self):
         """ Resample the particles according to the new particle weights.
@@ -267,7 +283,7 @@ class ParticleFilter(Node):
         weights = [p.w for p in self.particle_cloud]
 
         # select particles based on weights
-        chosen = self.transform_helper.draw_random_sample(self.particle_cloud, weights, self.n_particles)
+        chosen = draw_random_sample(self.particle_cloud, weights, self.n_particles)
 
         # build new particle cloud
         new_cloud = []
@@ -283,7 +299,7 @@ class ParticleFilter(Node):
             new_cloud.append(new_particle)
 
         self.particle_cloud = new_cloud
-        self.normalize_particles
+        self.normalize_particles()
 
     def update_particles_with_laser(self, r, theta):
         """ Updates the particle weights in response to the scan data
@@ -296,7 +312,7 @@ class ParticleFilter(Node):
         radii = []
         thetas = []
         for i in range(len(r)):
-            if i % n == 0 and not(math.isinf(r(i))) and not(math.isnan(r(i))):
+            if i % n == 0 and not(math.isinf(r[i])) and not(math.isnan(r[i])):
                 radii.append(r[i])
                 thetas.append(theta[i])
 
@@ -337,8 +353,6 @@ class ParticleFilter(Node):
             Arguments
             xy_theta: a triple consisting of the mean x, y, and theta (yaw) to initialize the
                       particle cloud around.  If this input is omitted, the odometry will be used """
-        if xy_theta is None:
-            xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
         self.particle_cloud = []
         
         # if no xy_theta, use odometry
@@ -353,7 +367,7 @@ class ParticleFilter(Node):
             particle_x = x0 + np.random.normal(0, 1) # std dev of 1m
             particle_y = y0 + np.random.normal(0, 1)
             particle_theta = theta0 + np.random.normal(0,2) # std dev of 2 rad
-            particle_theta = self.transform_helper.wrap_to_pi()
+            particle_theta = self.transform_helper.angle_normalize(particle_theta)
 
             particle = Particle(particle_x, particle_y, particle_theta, w = 1.0)
             self.particle_cloud.append(particle)
