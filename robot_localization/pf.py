@@ -151,6 +151,7 @@ class ParticleFilter(Node):
         # clear the current scan so that we can process the next one
         self.scan_to_process = None
 
+
         self.odom_pose = new_pose
         new_odom_xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
         print("x: {0}, y: {1}, yaw: {2}".format(*new_odom_xy_theta))
@@ -184,8 +185,6 @@ class ParticleFilter(Node):
         # first make sure that the particle weights are normalized
         self.normalize_particles()
 
-        # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object
-        # just to get started we will fix the robot's pose to always be at the origin
         self.robot_pose = Pose()
         
 
@@ -239,7 +238,6 @@ class ParticleFilter(Node):
         """
         # make sure the distribution is normalized
         self.normalize_particles()
-        # TODO: fill out the rest of the implementation
 
         # collect weights
         weights = [p.w for p in self.particle_cloud]
@@ -268,8 +266,41 @@ class ParticleFilter(Node):
             r: the distance readings to obstacles
             theta: the angle relative to the robot frame for each corresponding reading 
         """
-        # TODO: implement this
-        pass
+
+        # take every nth reading, avoid inf or nan readings
+        n = 5
+        radii = []
+        thetas = []
+        for i in range(len(r)):
+            if i % n == 0 and not(math.isinf(r(i))) and not(math.isnan(r(i))):
+                radii.append(r[i])
+                thetas.append(theta[i])
+
+        sigma = 0.2 # m
+        # loop through particles
+        for p in self.particle_cloud:
+            dists = []
+            # loop through each beam reading
+            for i in range(len(radii)):
+                # find where beam would be in world frame if robot was at particle location
+                map_x = p.x + radii[i] * math.cos(p.theta + thetas[i])
+                map_y = p.y + radii[i] * math.sin(p.theta + thetas[i])
+
+                # find how close obstacle is to detected obstacle
+                d = self.occupancy_field.get_closest_obstacle_distance(map_x,map_y)
+                if math.isnan(d):
+                    d = 2.0 # large penalty dist
+                dists.append(d)
+
+            # gaussian likelihood
+            dists = np.array(dists)
+            p.w = np.sum(np.exp(-dists**2 / (2* sigma**2)))   
+                
+
+                
+        
+        
+    
 
     def update_initial_pose(self, msg):
         """ Callback function to handle re-initializing the particle filter based on a pose estimate.
@@ -285,7 +316,6 @@ class ParticleFilter(Node):
         if xy_theta is None:
             xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
         self.particle_cloud = []
-        # TODO create particles
         
         # if no xy_theta, use odometry
         if xy_theta is None:
@@ -309,9 +339,22 @@ class ParticleFilter(Node):
         self.update_robot_pose()
 
     def normalize_particles(self):
-        """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0) """
-        # TODO: implement this
-        pass
+        """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0)
+        divides each particle weight by the total sum of weights
+        """
+        # find total weight
+        w_total = sum(p.w for p in self.particle_cloud)
+
+        if w_total <= 0 or math.isnan(w_total):
+            # handling edge cases if weights are not useable
+            uniform = 1.0 / len(self.particle_cloud)
+            for p in self.particle_cloud:
+                p.w = uniform
+            return
+
+        # divide each weight by total
+        for p in self.particle_cloud:
+            p.w = p.w / w_total
 
     def publish_particles(self, timestamp):
         msg = ParticleCloud()
