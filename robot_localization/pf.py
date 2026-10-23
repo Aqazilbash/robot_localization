@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-""" This is the starter code for the robot localization project """
 
 import rclpy
 from threading import Thread
@@ -46,7 +45,6 @@ class Particle(object):
         return Pose(position=Point(x=self.x, y=self.y, z=0.0),
                     orientation=Quaternion(x=q[0], y=q[1], z=q[2], w=q[3]))
 
-    # TODO: define additional helper functions if needed
 
 class ParticleFilter(Node):
     """ The class that represents a Particle Filter ROS Node
@@ -70,6 +68,7 @@ class ParticleFilter(Node):
             thread: this thread runs your main loop
     """
     def __init__(self):
+        "initialize the particle filter, creates variables, publishers, subscribers, etc"
         super().__init__('pf')
         self.base_frame = "base_footprint"   # the frame of the robot base
         self.map_frame = "map"          # the name of the map coordinate frame
@@ -81,7 +80,6 @@ class ParticleFilter(Node):
         self.d_thresh = 0.2             # the amount of linear movement before performing an update
         self.a_thresh = math.pi/6       # the amount of angular movement before performing an update
 
-        # TODO: define additional constants if needed
 
         # pose_listener responds to selection of a new approximate robot location (for instance using rviz)
         self.create_subscription(PoseWithCovarianceStamped, 'initialpose', self.update_initial_pose, 10)
@@ -178,9 +176,8 @@ class ParticleFilter(Node):
 
     def update_robot_pose(self):
         """ Update the estimate of the robot's pose given the updated particles.
-            There are two logical methods for this:
-                (1): compute the mean pose
-                (2): compute the most likely pose (i.e. the mode of the distribution)
+            Takes the weighted average of all particle position and heading,
+            weighted based on each particle's likelihood weight value
         """
         # first make sure that the particle weights are normalized
         self.normalize_particles()
@@ -227,29 +224,6 @@ class ParticleFilter(Node):
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
-        """
-        t1_o = [[math.cos(self.current_odom_xy_theta[2]), -math.sin(self.current_odom_xy_theta[2]), self.current_odom_xy_theta[0]],
-                  [math.sin(self.current_odom_xy_theta[2]), math.cos(self.current_odom_xy_theta[2]), self.current_odom_xy_theta[1]],
-                  [0, 0, 1]]
-        x_t1 = [[self.current_odom_xy_theta[0]],
-                   [self.current_odom_xy_theta[1]],
-                   [1]]
-        t2_o = [[math.cos(new_odom_xy_theta[2]), -math.sin(new_odom_xy_theta[2]), new_odom_xy_theta[0]],
-                  [math.sin(new_odom_xy_theta[2]), math.cos(new_odom_xy_theta[2]), new_odom_xy_theta[1]],
-                  [0, 0, 1]]
-        t2_t1 = np.linalg.inv(t1_o) @ t2_o
-
-        t1_o_p = [[math.cos(p.theta), -math.sin(p.theta), p.x],
-                  [math.sin(p.theta), math.cos(p.theta), p.y],
-                  [0, 0, 1]]
-        x_t1_p = [[p.x],
-                   [p.y],
-                   [1]]
-        t2_o_p = [[math.cos(new_odom_xy_theta[2]), -math.sin(new_odom_xy_theta[2]), new_odom_xy_theta[0]],
-                  [math.sin(new_odom_xy_theta[2]), math.cos(new_odom_xy_theta[2]), new_odom_xy_theta[1]],
-                  [0, 0, 1]]
-        t2_t1_p = np.linalg.inv(t1_o) @ t2_o
-        """
 
         # theta is in odom frame, need to convert to robot frame
         [old_x, old_y, old_theta] = old_odom_xy_theta
@@ -281,9 +255,20 @@ class ParticleFilter(Node):
 
         # collect weights
         weights = [p.w for p in self.particle_cloud]
+        max_w = max(weights)
+        dominant = self.particle_cloud[weights.index(max_w)]
+
 
         # select particles based on weights
         chosen = draw_random_sample(self.particle_cloud, weights, self.n_particles)
+
+        # unit test: if one particle holds >90% of the weight, at least half of the
+        # chosen particles must be copies of it (checked before jitter is added)
+        if max_w > 0.9:
+            copies = sum(1 for p in chosen if p.x == dominant.x and p.y == dominant.y)
+            assert copies >= 0.5 * self.n_particles, \
+                "resample_particles: dominant particle (w={0:.3f}) was chosen only {1}/{2} times".format(
+                    max_w, copies, self.n_particles)
 
         # build new particle cloud
         new_cloud = []
@@ -335,6 +320,11 @@ class ParticleFilter(Node):
             # gaussian likelihood
             dists = np.array(dists)
             p.w = np.sum(np.exp(-dists**2 / (2* sigma**2)))   
+
+            #unit test: every weight is finite and non-negative (a nan here poisons the whole cloud)
+            assert np.isfinite(p.w) and p.w >= 0, \
+                "update_particles_with_laser: bad weight {0}".format(p.w)
+
                 
 
                 
@@ -349,7 +339,11 @@ class ParticleFilter(Node):
         self.initialize_particle_cloud(msg.header.stamp, xy_theta)
 
     def initialize_particle_cloud(self, timestamp, xy_theta=None):
-        """ Initialize the particle cloud.
+        """ 
+        Initialize the particle cloud.
+        Creates a set of n_particles particles, each with a random location based on a normal distribution
+        around the current pose estimate (or odom frame if there is no estimate)
+        Then normalizes particle weights and updates the robot pose
             Arguments
             xy_theta: a triple consisting of the mean x, y, and theta (yaw) to initialize the
                       particle cloud around.  If this input is omitted, the odometry will be used """
@@ -394,7 +388,13 @@ class ParticleFilter(Node):
         for p in self.particle_cloud:
             p.w = p.w / w_total
 
+        # unit test: ensure particle weights add to 1
+        assert math.isclose(sum(p.w for p in self.particle_cloud),1), "error: normalized particle weights do not add to 1"
+
     def publish_particles(self, timestamp):
+        """
+        Publishes particles to topic
+        """
         msg = ParticleCloud()
         msg.header.frame_id = self.map_frame
         msg.header.stamp = timestamp
@@ -403,6 +403,9 @@ class ParticleFilter(Node):
         self.particle_pub.publish(msg)
 
     def scan_received(self, msg):
+        """
+        Runs when a scan is recieved
+        """
         self.last_scan_timestamp = msg.header.stamp
         # we throw away scans until we are done processing the previous scan
         # self.scan_to_process is set to None in the run_loop 
